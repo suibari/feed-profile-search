@@ -6,7 +6,7 @@ import { createServer } from './lexicon'
 import feedGeneration from './methods/feed-generation'
 import describeGenerator from './methods/describe-generator'
 import { createDb, Database, migrateToLatest } from './db'
-import { FirehoseSubscription } from './subscription'
+import { ScpecificActorsSubscription } from './subscription'
 import { AppContext, Config } from './config'
 import wellKnown from './well-known'
 
@@ -14,25 +14,26 @@ export class FeedGenerator {
   public app: express.Application
   public server?: http.Server
   public db: Database
-  public firehose: FirehoseSubscription
+  public actorsfeed: ScpecificActorsSubscription
   public cfg: Config
 
   constructor(
     app: express.Application,
     db: Database,
-    firehose: FirehoseSubscription,
+    actorsfeed: ScpecificActorsSubscription,
     cfg: Config,
   ) {
     this.app = app
     this.db = db
-    this.firehose = firehose
+    this.actorsfeed = actorsfeed
     this.cfg = cfg
   }
 
   static create(cfg: Config) {
     const app = express()
     const db = createDb(cfg.sqliteLocation)
-    const firehose = new FirehoseSubscription(db, cfg.subscriptionEndpoint)
+    // const firehose = new FirehoseSubscription(db, cfg.subscriptionEndpoint)
+    const actorsfeed = new ScpecificActorsSubscription(db)
 
     const didCache = new MemoryCache()
     const didResolver = new DidResolver({
@@ -58,12 +59,12 @@ export class FeedGenerator {
     app.use(server.xrpc.router)
     app.use(wellKnown(ctx))
 
-    return new FeedGenerator(app, db, firehose, cfg)
+    return new FeedGenerator(app, db, actorsfeed, cfg)
   }
 
   async start(): Promise<http.Server> {
     await migrateToLatest(this.db)
-    this.firehose.run(this.cfg.subscriptionReconnectDelay)
+    this.actorsfeed.run()
     this.server = this.app.listen(this.cfg.port, this.cfg.listenhost)
     await events.once(this.server, 'listening')
     return this.server
