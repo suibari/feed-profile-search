@@ -8,6 +8,7 @@ import { BskyAgent } from '@atproto/api'
 import { QueryParams as QueryParamsAuthors } from '@atproto/api/dist/client/types/app/bsky/unspecced/searchActorsSkeleton'
 import { QueryParams as QueryParamsFeeds } from './lexicon/types/app/bsky/feed/getAuthorFeed'
 import { Database } from './db'
+import { ProfileView } from '@atproto/api/dist/client/types/app/bsky/actor/defs'
 
 export class FirehoseSubscription extends FirehoseSubscriptionBase {
   async handleEvent(evt: RepoEvent) {
@@ -78,12 +79,23 @@ export class ScpecificActorsSubscription {
     })
 
     // プロフィール検索
-    const params_actors:QueryParamsAuthors = {
-      q: process.env.FEEDGEN_QUERY || '',
-      limit: 100
+    // searchActorsがOR検索に対応してないので、QUERYを分割検索し最後に結果を結合
+    let actors_arr: ProfileView[] = []
+    const q_arr = process.env.FEEDGEN_QUERY?.split(' ')
+    if (!q_arr) {
+      console.error("query parameter is null!")
+      return
     }
-    const { data: data_actors } = await this.agent.searchActors(params_actors)
-    for (let actor of data_actors.actors) {
+    for (let q of q_arr) {
+      const params_actors:QueryParamsAuthors = {
+        q: q,
+        limit: 100
+      }
+      const { data: data_actors } = await this.agent.searchActors(params_actors)
+      actors_arr.push(...data_actors.actors)
+    }
+    // 検索して見つかった全ユーザに対して実行
+    for (let actor of actors_arr) {
       console.log(actor.description)
       // ポスト取得
       const params_feed:QueryParamsFeeds = {
@@ -115,5 +127,5 @@ export class ScpecificActorsSubscription {
 
   intervalId = setInterval(async () => {
     await this.reload()
-  }, 60*1000) // 60s
+  }, 10*60*1000) // 10m
 }
