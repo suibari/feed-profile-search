@@ -6,9 +6,10 @@ import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
 import dotenv from 'dotenv'
 import { BskyAgent } from '@atproto/api'
 import { QueryParams as QueryParamsAuthors } from '@atproto/api/dist/client/types/app/bsky/unspecced/searchActorsSkeleton'
-import { QueryParams as QueryParamsFeeds } from './lexicon/types/app/bsky/feed/getAuthorFeed'
+import { OutputSchema, QueryParams as QueryParamsFeeds } from './lexicon/types/app/bsky/feed/getAuthorFeed'
 import { Database } from './db'
 import { ProfileView } from '@atproto/api/dist/client/types/app/bsky/actor/defs'
+import { appendFile } from 'fs'
 
 export class FirehoseSubscription extends FirehoseSubscriptionBase {
   async handleEvent(evt: RepoEvent) {
@@ -91,12 +92,18 @@ export class ScpecificActorsSubscription {
         q: q,
         limit: 100
       }
-      const { data: data_actors } = await this.agent.searchActors(params_actors)
-      actors_arr.push(...data_actors.actors)
+      let cursor: string | undefined = undefined;
+      do {
+        const { data: data_actors } = await this.agent.searchActors({...params_actors, cursor});
+        actors_arr = actors_arr.concat(...data_actors.actors);
+        cursor = data_actors.cursor;
+      } while (cursor);
     }
+    console.log(actors_arr.length);
+
     // 検索して見つかった全ユーザに対して実行
     for (let actor of actors_arr) {
-      console.log(actor.description)
+      // console.log(actor.description)
       // ポスト取得
       const params_feed:QueryParamsFeeds = {
         actor: actor.did,
@@ -106,23 +113,24 @@ export class ScpecificActorsSubscription {
       const { data: data_feed } = await this.agent.getAuthorFeed(params_feed)
       const { feed: postsArray, cursor: nextPage } = data_feed
       for (let post of postsArray) {
-        console.log(post.post.record)
-        // DB格納
-        const postsToCreate = {
-          uri: post.post.uri,
-          cid: post.post.cid,
-          // indexedAt: new Date().toISOString(),
-          indexedAt: post.post.indexedAt
+        if (!post.reason) {
+          // console.log(post.post.record)
+          // DB格納
+          const postsToCreate = {
+            uri: post.post.uri,
+            cid: post.post.cid,
+            indexedAt: post.post.indexedAt
+          }
+          await this.db
+            .insertInto('post')
+            .values(postsToCreate)
+            .onConflict(oc => oc.doNothing())
+            .execute()
+          rowcount++
         }
-        await this.db
-          .insertInto('post')
-          .values(postsToCreate)
-          .onConflict(oc => oc.doNothing())
-          .execute()
-        rowcount++
       }
-      console.log(rowcount)
     }
+    console.log("[INFO] inserted total " + rowcount + " post to DB.");
   }
 
   intervalId = setInterval(async () => {
